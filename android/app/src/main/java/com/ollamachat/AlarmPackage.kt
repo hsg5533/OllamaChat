@@ -13,6 +13,7 @@ class AlarmPackage : ReactPackage {
           AlarmModule(reactContext),
           SpeakModule(reactContext),
           SttModule(reactContext),
+          DeviceToolsModule(reactContext),
       )
 
   override fun createViewManagers(

@@ -16,7 +16,7 @@ export type AgentEvent =
   | { type: 'tool_result'; name: string; result: string };
 
 const SYSTEM_PROMPT =
-  '당신은 도구를 사용할 수 있는 유능한 비서입니다. 항상 한국어로 답하세요. 모르는 내용이거나 최신 정보가 필요하면 `web_search`로 검색하고 필요하면 `fetch_url`로 결과 페이지를 읽은 뒤 설명하며, 다운로드 폴더의 파일 작업에는 `list_files`/`read_file`/`write_file`/`append_file`/`delete_file`/`file_exists`를 사용하고, 날씨는 `get_weather`, 웹/지도/메일은 `open_url`/`open_map`/`send_email`, 공유는 `share_text`, 알람은 `set_alarm`, 전화는 `call_phone`, 문자는 `send_sms`, 클립보드는 `clipboard_get`/`clipboard_set`, 기기 상태는 `device_status`, 위치는 `get_location`, 연락처 검색은 `find_contact`를 사용하며, 도구로 얻을 수 있는 값을 추측하지 말고, 도구 결과를 받은 뒤에는 그 결과를 바탕으로 간결하게 최종 답변을 하세요.';
+  '당신은 도구를 사용할 수 있는 유능한 비서입니다. 항상 한국어로 답하세요. 모르는 내용이거나 최신 정보가 필요하면 `web_search`로 검색하고 필요하면 `fetch_url`로 결과 페이지를 읽은 뒤 설명하며, 다운로드 폴더의 파일 작업에는 `list_files`/`read_file`/`write_file`/`append_file`/`delete_file`/`file_exists`를 사용하고, 날씨는 `get_weather`, 웹/지도/메일은 `open_url`/`open_map`/`send_email`, 공유는 `share_text`, 알람은 `set_alarm`, 타이머는 `set_timer`, 전화는 `call_phone`, 문자는 `send_sms`, 캘린더 일정 추가는 `add_calendar_event`, 일정 조회는 `read_calendar`, 연락처 추가는 `create_contact`, 클립보드는 `clipboard_get`/`clipboard_set`, 기기 상태는 `device_status`, 위치는 `get_location`, 연락처 검색은 `find_contact`, 손전등은 `flashlight`, 진동은 `vibrate`, 볼륨은 `set_volume`, 알림은 `notify`를 사용하며, 도구로 얻을 수 있는 값을 추측하지 말고, 도구 결과를 받은 뒤에는 그 결과를 바탕으로 간결하게 최종 답변을 하세요.';
 
 export class Agent {
   private host: string;

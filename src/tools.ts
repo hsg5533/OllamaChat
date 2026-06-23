@@ -27,6 +27,32 @@ export interface AgentTool {
   run: (args: Record<string, any>) => Promise<string>;
 }
 
+// Wrap a tool body so any thrown error becomes a uniform "error: ..." string.
+// Lets each tool focus on its happy path instead of repeating try/catch.
+function safe(
+  fn: (args: Record<string, any>) => Promise<string>,
+): AgentTool['run'] {
+  return async args => {
+    try {
+      return await fn(args);
+    } catch (e) {
+      return `error: ${(e as Error).message}`;
+    }
+  };
+}
+
+// Request an Android runtime permission; throw if the user denies it (the
+// thrown message is surfaced via safe() as "error: <label> permission denied").
+async function requirePermission(
+  perm: Parameters<typeof PermissionsAndroid.request>[0],
+  label: string,
+): Promise<void> {
+  const granted = await PermissionsAndroid.request(perm);
+  if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+    throw new Error(`${label} permission denied`);
+  }
+}
+
 // --- File tools: public Download folder, direct path (needs All files access) ---
 const DOWNLOAD = RNFS.DownloadDirectoryPath;
 
@@ -47,20 +73,16 @@ const listFileTool: AgentTool = {
       parameters: { type: 'object', properties: {} },
     },
   },
-  run: async () => {
-    try {
-      const entries = await RNFS.readDir(DOWNLOAD);
-      return (
-        entries
-          .map((e: RNFS.ReadDirResItemT) =>
-            e.isDirectory() ? `${e.name}/` : e.name,
-          )
-          .join('\n') || '(empty)'
-      );
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async () => {
+    const entries = await RNFS.readDir(DOWNLOAD);
+    return (
+      entries
+        .map((e: RNFS.ReadDirResItemT) =>
+          e.isDirectory() ? `${e.name}/` : e.name,
+        )
+        .join('\n') || '(empty)'
+    );
+  }),
 };
 
 const readFileTool: AgentTool = {
@@ -79,14 +101,10 @@ const readFileTool: AgentTool = {
       },
     },
   },
-  run: async ({ path }) => {
-    try {
-      const content = await RNFS.readFile(downloadPath(path), 'utf8');
-      return content.slice(0, 4000);
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ path }) => {
+    const content = await RNFS.readFile(downloadPath(path), 'utf8');
+    return content.slice(0, 4000);
+  }),
 };
 
 const writeFileTool: AgentTool = {
@@ -106,14 +124,10 @@ const writeFileTool: AgentTool = {
       },
     },
   },
-  run: async ({ path, content }) => {
-    try {
-      await RNFS.writeFile(downloadPath(path), String(content ?? ''), 'utf8');
-      return `saved to Download/${path}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ path, content }) => {
+    await RNFS.writeFile(downloadPath(path), String(content ?? ''), 'utf8');
+    return `saved to Download/${path}`;
+  }),
 };
 
 // --- Web tool: fetch a page's readable text (model summarizes it) ---
@@ -151,21 +165,17 @@ const fetchUrlTool: AgentTool = {
       },
     },
   },
-  run: async ({ url }) => {
-    try {
-      const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-      const res = await fetch(target, {
-        headers: { 'User-Agent': 'Mozilla/5.0' },
-      });
-      if (!res.ok) {
-        return `error: HTTP ${res.status}`;
-      }
-      const text = htmlToText(await res.text());
-      return text.slice(0, 6000) || '(no readable text found)';
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
+  run: safe(async ({ url }) => {
+    const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    const res = await fetch(target, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    if (!res.ok) {
+      return `error: HTTP ${res.status}`;
     }
-  },
+    const text = htmlToText(await res.text());
+    return text.slice(0, 6000) || '(no readable text found)';
+  }),
 };
 
 // --- Web search (keyless, DuckDuckGo HTML) ---
@@ -185,21 +195,17 @@ const webSearchTool: AgentTool = {
       },
     },
   },
-  run: async ({ query }) => {
-    try {
-      const res = await fetch(
-        `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-        { headers: { 'User-Agent': 'Mozilla/5.0' } },
-      );
-      if (!res.ok) {
-        return `error: HTTP ${res.status}`;
-      }
-      const text = htmlToText(await res.text());
-      return text.slice(0, 4000) || '(no results)';
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
+  run: safe(async ({ query }) => {
+    const res = await fetch(
+      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' } },
+    );
+    if (!res.ok) {
+      return `error: HTTP ${res.status}`;
     }
-  },
+    const text = htmlToText(await res.text());
+    return text.slice(0, 4000) || '(no results)';
+  }),
 };
 
 // --- Phone tools: open the dialer / SMS composer (user confirms the action) ---
@@ -226,14 +232,10 @@ const callPhoneTool: AgentTool = {
       },
     },
   },
-  run: async ({ number }) => {
-    try {
-      await Linking.openURL(`tel:${cleanNumber(number)}`);
-      return `opened dialer for ${number}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ number }) => {
+    await Linking.openURL(`tel:${cleanNumber(number)}`);
+    return `opened dialer for ${number}`;
+  }),
 };
 
 const sendSmsTool: AgentTool = {
@@ -253,15 +255,11 @@ const sendSmsTool: AgentTool = {
       },
     },
   },
-  run: async ({ number, message }) => {
-    try {
-      const body = encodeURIComponent(String(message ?? ''));
-      await Linking.openURL(`sms:${cleanNumber(number)}?body=${body}`);
-      return `opened SMS composer for ${number}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ number, message }) => {
+    const body = encodeURIComponent(String(message ?? ''));
+    await Linking.openURL(`sms:${cleanNumber(number)}?body=${body}`);
+    return `opened SMS composer for ${number}`;
+  }),
 };
 
 // --- Weather (keyless, wttr.in) ---
@@ -280,25 +278,21 @@ const weatherTool: AgentTool = {
       },
     },
   },
-  run: async ({ city }) => {
-    try {
-      const res = await fetch(
-        `https://wttr.in/${encodeURIComponent(city)}?format=j1`,
-        { headers: { 'User-Agent': 'curl/8' } },
-      );
-      if (!res.ok) {
-        return `error: HTTP ${res.status}`;
-      }
-      const d = await res.json();
-      const c = d.current_condition?.[0];
-      if (!c) {
-        return '(no data)';
-      }
-      return `${city}: ${c.temp_C}°C (feels ${c.FeelsLikeC}°C), ${c.weatherDesc?.[0]?.value}, humidity ${c.humidity}%, wind ${c.windspeedKmph}km/h`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
+  run: safe(async ({ city }) => {
+    const res = await fetch(
+      `https://wttr.in/${encodeURIComponent(city)}?format=j1`,
+      { headers: { 'User-Agent': 'curl/8' } },
+    );
+    if (!res.ok) {
+      return `error: HTTP ${res.status}`;
     }
-  },
+    const d = await res.json();
+    const c = d.current_condition?.[0];
+    if (!c) {
+      return '(no data)';
+    }
+    return `${city}: ${c.temp_C}°C (feels ${c.FeelsLikeC}°C), ${c.weatherDesc?.[0]?.value}, humidity ${c.humidity}%, wind ${c.windspeedKmph}km/h`;
+  }),
 };
 
 // --- Linking tools: open things in other apps ---
@@ -315,15 +309,11 @@ const openUrlTool: AgentTool = {
       },
     },
   },
-  run: async ({ url }) => {
-    try {
-      const target = /^[a-z]+:\/\//i.test(url) ? url : `https://${url}`;
-      await Linking.openURL(target);
-      return `opened ${target}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ url }) => {
+    const target = /^[a-z]+:\/\//i.test(url) ? url : `https://${url}`;
+    await Linking.openURL(target);
+    return `opened ${target}`;
+  }),
 };
 
 const openMapTool: AgentTool = {
@@ -341,14 +331,10 @@ const openMapTool: AgentTool = {
       },
     },
   },
-  run: async ({ query }) => {
-    try {
-      await Linking.openURL(`geo:0,0?q=${encodeURIComponent(query)}`);
-      return `opened map for ${query}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ query }) => {
+    await Linking.openURL(`geo:0,0?q=${encodeURIComponent(query)}`);
+    return `opened map for ${query}`;
+  }),
 };
 
 const sendEmailTool: AgentTool = {
@@ -369,17 +355,13 @@ const sendEmailTool: AgentTool = {
       },
     },
   },
-  run: async ({ to, subject, body }) => {
-    try {
-      const q = `subject=${encodeURIComponent(
-        subject ?? '',
-      )}&body=${encodeURIComponent(body ?? '')}`;
-      await Linking.openURL(`mailto:${to}?${q}`);
-      return `opened email draft to ${to}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ to, subject, body }) => {
+    const q = `subject=${encodeURIComponent(
+      subject ?? '',
+    )}&body=${encodeURIComponent(body ?? '')}`;
+    await Linking.openURL(`mailto:${to}?${q}`);
+    return `opened email draft to ${to}`;
+  }),
 };
 
 const shareTextTool: AgentTool = {
@@ -395,14 +377,10 @@ const shareTextTool: AgentTool = {
       },
     },
   },
-  run: async ({ text }) => {
-    try {
-      await Share.share({ message: String(text ?? '') });
-      return 'opened share sheet';
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ text }) => {
+    await Share.share({ message: String(text ?? '') });
+    return 'opened share sheet';
+  }),
 };
 
 const setAlarmTool: AgentTool = {
@@ -422,20 +400,16 @@ const setAlarmTool: AgentTool = {
       },
     },
   },
-  run: async ({ hour, minute, message }) => {
-    try {
-      // Native module so int extras reach the clock app (Linking.sendIntent
-      // would pass them as Double, which AlarmClock ignores).
-      await NativeModules.AlarmModule.setAlarm(
-        Number(hour),
-        Number(minute),
-        String(message ?? 'Alarm'),
-      );
-      return `alarm set for ${hour}:${String(minute).padStart(2, '0')}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ hour, minute, message }) => {
+    // Native module so int extras reach the clock app (Linking.sendIntent
+    // would pass them as Double, which AlarmClock ignores).
+    await NativeModules.AlarmModule.setAlarm(
+      Number(hour),
+      Number(minute),
+      String(message ?? 'Alarm'),
+    );
+    return `alarm set for ${hour}:${String(minute).padStart(2, '0')}`;
+  }),
 };
 
 // --- File extras ---
@@ -454,14 +428,10 @@ const deleteFileTool: AgentTool = {
       },
     },
   },
-  run: async ({ path }) => {
-    try {
-      await RNFS.unlink(downloadPath(path));
-      return `deleted ${path}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ path }) => {
+    await RNFS.unlink(downloadPath(path));
+    return `deleted ${path}`;
+  }),
 };
 
 const appendFileTool: AgentTool = {
@@ -481,14 +451,10 @@ const appendFileTool: AgentTool = {
       },
     },
   },
-  run: async ({ path, content }) => {
-    try {
-      await RNFS.appendFile(downloadPath(path), String(content ?? ''), 'utf8');
-      return `appended to ${path}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ path, content }) => {
+    await RNFS.appendFile(downloadPath(path), String(content ?? ''), 'utf8');
+    return `appended to ${path}`;
+  }),
 };
 
 const fileExistsTool: AgentTool = {
@@ -506,14 +472,10 @@ const fileExistsTool: AgentTool = {
       },
     },
   },
-  run: async ({ path }) => {
-    try {
-      const exists = await RNFS.exists(downloadPath(path));
-      return exists ? 'yes' : 'no';
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ path }) => {
+    const exists = await RNFS.exists(downloadPath(path));
+    return exists ? 'yes' : 'no';
+  }),
 };
 
 // --- Native device tools ---
@@ -530,14 +492,10 @@ const clipboardSetTool: AgentTool = {
       },
     },
   },
-  run: async ({ text }) => {
-    try {
-      Clipboard.setString(String(text ?? ''));
-      return 'copied to clipboard';
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ text }) => {
+    Clipboard.setString(String(text ?? ''));
+    return 'copied to clipboard';
+  }),
 };
 
 const clipboardGetTool: AgentTool = {
@@ -549,13 +507,9 @@ const clipboardGetTool: AgentTool = {
       parameters: { type: 'object', properties: {} },
     },
   },
-  run: async () => {
-    try {
-      return (await Clipboard.getString()) || '(empty)';
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async () => {
+    return (await Clipboard.getString()) || '(empty)';
+  }),
 };
 
 const deviceStatusTool: AgentTool = {
@@ -568,19 +522,15 @@ const deviceStatusTool: AgentTool = {
       parameters: { type: 'object', properties: {} },
     },
   },
-  run: async () => {
-    try {
-      const battery = Math.round((await DeviceInfo.getBatteryLevel()) * 100);
-      const charging = await DeviceInfo.isBatteryCharging();
-      const model = DeviceInfo.getModel();
-      const os = `${DeviceInfo.getSystemName()} ${DeviceInfo.getSystemVersion()}`;
-      return `battery ${battery}%${
-        charging ? ' (charging)' : ''
-      }, ${model}, ${os}`;
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async () => {
+    const battery = Math.round((await DeviceInfo.getBatteryLevel()) * 100);
+    const charging = await DeviceInfo.isBatteryCharging();
+    const model = DeviceInfo.getModel();
+    const os = `${DeviceInfo.getSystemName()} ${DeviceInfo.getSystemVersion()}`;
+    return `battery ${battery}%${
+      charging ? ' (charging)' : ''
+    }, ${model}, ${os}`;
+  }),
 };
 
 const locationTool: AgentTool = {
@@ -593,13 +543,11 @@ const locationTool: AgentTool = {
       parameters: { type: 'object', properties: {} },
     },
   },
-  run: async () => {
-    const granted = await PermissionsAndroid.request(
+  run: safe(async () => {
+    await requirePermission(
       PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      'location',
     );
-    if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-      return 'error: location permission denied';
-    }
     return new Promise<string>(resolve => {
       Geolocation.getCurrentPosition(
         pos =>
@@ -612,7 +560,7 @@ const locationTool: AgentTool = {
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
       );
     });
-  },
+  }),
 };
 
 const contactsTool: AgentTool = {
@@ -631,29 +579,23 @@ const contactsTool: AgentTool = {
       },
     },
   },
-  run: async ({ name }) => {
-    const granted = await PermissionsAndroid.request(
+  run: safe(async ({ name }) => {
+    await requirePermission(
       PermissionsAndroid.PERMISSIONS.READ_CONTACTS,
+      'contacts',
     );
-    if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-      return 'error: contacts permission denied';
+    const found = await Contacts.getContactsMatchingString(String(name));
+    if (!found.length) {
+      return `no contact found for '${name}'`;
     }
-    try {
-      const found = await Contacts.getContactsMatchingString(String(name));
-      if (!found.length) {
-        return `no contact found for '${name}'`;
-      }
-      return found
-        .slice(0, 5)
-        .map(
-          c =>
-            `${c.displayName}: ${c.phoneNumbers.map(p => p.number).join(', ')}`,
-        )
-        .join('\n');
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+    return found
+      .slice(0, 5)
+      .map(
+        c =>
+          `${c.displayName}: ${c.phoneNumbers.map(p => p.number).join(', ')}`,
+      )
+      .join('\n');
+  }),
 };
 
 // --- More native device tools (self-written native modules) ---
@@ -673,16 +615,12 @@ const setTimerTool: AgentTool = {
       },
     },
   },
-  run: async ({ seconds, message }) => {
-    try {
-      return await NativeModules.AlarmModule.setTimer(
-        Number(seconds),
-        String(message ?? 'Timer'),
-      );
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ seconds, message }) => {
+    return await NativeModules.AlarmModule.setTimer(
+      Number(seconds),
+      String(message ?? 'Timer'),
+    );
+  }),
 };
 
 const flashlightTool: AgentTool = {
@@ -700,13 +638,9 @@ const flashlightTool: AgentTool = {
       },
     },
   },
-  run: async ({ on }) => {
-    try {
-      return await NativeModules.DeviceToolsModule.flashlight(!!on);
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ on }) => {
+    return await NativeModules.DeviceToolsModule.flashlight(!!on);
+  }),
 };
 
 const vibrateTool: AgentTool = {
@@ -723,13 +657,9 @@ const vibrateTool: AgentTool = {
       },
     },
   },
-  run: async ({ ms }) => {
-    try {
-      return await NativeModules.DeviceToolsModule.vibrate(Number(ms ?? 400));
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ ms }) => {
+    return await NativeModules.DeviceToolsModule.vibrate(Number(ms ?? 400));
+  }),
 };
 
 const setVolumeTool: AgentTool = {
@@ -747,13 +677,9 @@ const setVolumeTool: AgentTool = {
       },
     },
   },
-  run: async ({ percent }) => {
-    try {
-      return await NativeModules.DeviceToolsModule.setVolume(Number(percent));
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ percent }) => {
+    return await NativeModules.DeviceToolsModule.setVolume(Number(percent));
+  }),
 };
 
 const notifyTool: AgentTool = {
@@ -772,21 +698,17 @@ const notifyTool: AgentTool = {
       },
     },
   },
-  run: async ({ title, body }) => {
-    try {
-      if (Number(Platform.Version) >= 33) {
-        await PermissionsAndroid.request(
-          'android.permission.POST_NOTIFICATIONS' as any,
-        );
-      }
-      return await NativeModules.DeviceToolsModule.notify(
-        String(title ?? ''),
-        String(body ?? ''),
+  run: safe(async ({ title, body }) => {
+    if (Number(Platform.Version) >= 33) {
+      await PermissionsAndroid.request(
+        'android.permission.POST_NOTIFICATIONS' as any,
       );
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
     }
-  },
+    return await NativeModules.DeviceToolsModule.notify(
+      String(title ?? ''),
+      String(body ?? ''),
+    );
+  }),
 };
 
 const writeCalendarTool: AgentTool = {
@@ -814,18 +736,14 @@ const writeCalendarTool: AgentTool = {
       },
     },
   },
-  run: async ({ title, start, durationMinutes, location }) => {
-    try {
-      return await NativeModules.DeviceToolsModule.addCalendarEvent(
-        String(title),
-        String(start),
-        Number(durationMinutes ?? 60),
-        String(location ?? ''),
-      );
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ title, start, durationMinutes, location }) => {
+    return await NativeModules.DeviceToolsModule.addCalendarEvent(
+      String(title),
+      String(start),
+      Number(durationMinutes ?? 60),
+      String(location ?? ''),
+    );
+  }),
 };
 
 const readCalendarTool: AgentTool = {
@@ -845,21 +763,15 @@ const readCalendarTool: AgentTool = {
       },
     },
   },
-  run: async ({ days }) => {
-    try {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.READ_CALENDAR,
-      );
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        return 'error: calendar permission denied';
-      }
-      return await NativeModules.DeviceToolsModule.readCalendar(
-        Number(days ?? 7),
-      );
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ days }) => {
+    await requirePermission(
+      PermissionsAndroid.PERMISSIONS.READ_CALENDAR,
+      'calendar',
+    );
+    return await NativeModules.DeviceToolsModule.readCalendar(
+      Number(days ?? 7),
+    );
+  }),
 };
 
 const createContactTool: AgentTool = {
@@ -880,17 +792,13 @@ const createContactTool: AgentTool = {
       },
     },
   },
-  run: async ({ name, phone, email }) => {
-    try {
-      return await NativeModules.DeviceToolsModule.createContact(
-        String(name),
-        String(phone ?? ''),
-        String(email ?? ''),
-      );
-    } catch (e) {
-      return `error: ${(e as Error).message}`;
-    }
-  },
+  run: safe(async ({ name, phone, email }) => {
+    return await NativeModules.DeviceToolsModule.createContact(
+      String(name),
+      String(phone ?? ''),
+      String(email ?? ''),
+    );
+  }),
 };
 
 export const tools: AgentTool[] = [

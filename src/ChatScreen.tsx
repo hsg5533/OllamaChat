@@ -9,7 +9,6 @@ import {
   NativeEventEmitter,
   NativeModules,
   PermissionsAndroid,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -68,7 +67,7 @@ function TypingText({
 
 export default function ChatScreen({ navigation }: { navigation: any }) {
   const insets = useSafeAreaInsets();
-  const { host, model, ready } = useSettings();
+  const { host, model, context, ready } = useSettings();
   const [input, setInput] = useState('');
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [busy, setBusy] = useState(false);
@@ -83,9 +82,9 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
   // Rebuild the agent whenever host/model change (or settings finish loading).
   useEffect(() => {
     if (ready) {
-      agentRef.current = new Agent({ host, model });
+      agentRef.current = new Agent({ host, model, context });
     }
-  }, [host, model, ready]);
+  }, [host, model, context, ready]);
 
   // Speech-to-text via the native SttModule (Android SpeechRecognizer).
   useEffect(() => {
@@ -124,10 +123,13 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
 
   const nextId = () => `${counter.current++}`;
   const scrollEnd = () => listRef.current?.scrollToEnd({ animated: false });
+  // Scroll after the new row has laid out (animated).
+  const scrollSoon = () =>
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
 
   const addLine = (role: ChatLine['role'], text: string) => {
     setLines(prev => [...prev, { id: nextId(), role, text }]);
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    scrollSoon();
   };
 
   const pickFromGallery = async () => {
@@ -207,7 +209,7 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
       ...prev,
       { id: nextId(), role: 'user', text: text || '(image)', image: imageUri },
     ]);
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    scrollSoon();
     setBusy(true);
     try {
       const answer = await agentRef.current.ask(

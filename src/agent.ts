@@ -22,12 +22,37 @@ export class Agent {
   private host: string;
   private model: string;
   private maxSteps: number;
+  private context: number;
+  private maxHistory: number;
   private history: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
 
-  constructor(opts: { host: string; model: string; maxSteps?: number }) {
+  constructor(opts: {
+    host: string;
+    model: string;
+    maxSteps?: number;
+    context?: number;
+    maxHistory?: number;
+  }) {
     this.host = opts.host.replace(/\/$/, '');
     this.model = opts.model;
     this.maxSteps = opts.maxSteps ?? 8;
+    this.context = opts.context ?? 8192;
+    this.maxHistory = opts.maxHistory ?? 20;
+  }
+
+  // Keep system prompt + most recent messages so the prompt stays within the
+  // model's context window. Trim until the first non-system message is a
+  // user turn, so no tool/assistant reply is left orphaned from its request.
+  private trimHistory() {
+    const [system, ...rest] = this.history;
+    if (rest.length <= this.maxHistory) {
+      return;
+    }
+    let kept = rest.slice(rest.length - this.maxHistory);
+    while (kept.length > 0 && kept[0].role !== 'user') {
+      kept.shift();
+    }
+    this.history = [system, ...kept];
   }
 
   reset() {
@@ -35,6 +60,7 @@ export class Agent {
   }
 
   private async chat(useTools: boolean): Promise<ChatMessage> {
+    this.trimHistory();
     const res = await fetch(`${this.host}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -45,6 +71,7 @@ export class Agent {
         // describe it instead of reaching for web_search.
         tools: useTools ? toolDefs : undefined,
         stream: false,
+        options: { num_ctx: this.context },
       }),
     });
     if (!res.ok) {
@@ -74,6 +101,9 @@ export class Agent {
 
       const calls = msg.tool_calls ?? [];
       if (calls.length === 0) {
+        if (!msg.content?.trim()) {
+          return '(모델이 빈 응답을 반환했습니다. 대화가 길어 컨텍스트 한도를 넘었을 수 있습니다. 새 대화를 시작해 보세요.)';
+        }
         return msg.content;
       }
 

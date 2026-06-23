@@ -1,4 +1,4 @@
-import {useEffect, useState} from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -9,8 +9,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {useSettings} from './settings';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSettings } from './settings';
 
 interface ModelInfo {
   name: string;
@@ -25,11 +25,17 @@ function fmtSize(bytes: number): string {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
 }
 
-export default function SettingsScreen({navigation}: {navigation: any}) {
+export default function SettingsScreen({ navigation }: { navigation: any }) {
   const insets = useSafeAreaInsets();
-  const {host: savedHost, model: savedModel, save} = useSettings();
+  const {
+    host: savedHost,
+    model: savedModel,
+    context: savedContext,
+    save,
+  } = useSettings();
   const [host, setHost] = useState(savedHost);
   const [model, setModel] = useState(savedModel);
+  const [context, setContext] = useState(String(savedContext));
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -65,7 +71,8 @@ export default function SettingsScreen({navigation}: {navigation: any}) {
   }, []);
 
   const onSave = async () => {
-    await save(host.trim(), model);
+    const ctx = Math.max(512, parseInt(context, 10) || 0);
+    await save(host.trim(), model, ctx);
     navigation.goBack();
   };
 
@@ -80,7 +87,7 @@ export default function SettingsScreen({navigation}: {navigation: any}) {
   };
 
   return (
-    <View style={[styles.root, {paddingTop: insets.top}]}>
+    <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={12}>
           <Text style={styles.back}>‹</Text>
@@ -92,8 +99,9 @@ export default function SettingsScreen({navigation}: {navigation: any}) {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          {paddingBottom: insets.bottom + 24},
-        ]}>
+          { paddingBottom: insets.bottom + 24 },
+        ]}
+      >
         {/* Server */}
         <Text style={styles.section}>SERVER</Text>
         <View style={styles.card}>
@@ -111,10 +119,26 @@ export default function SettingsScreen({navigation}: {navigation: any}) {
             />
             <TouchableOpacity
               style={styles.refreshBtn}
-              onPress={() => fetchModels(host)}>
+              onPress={() => fetchModels(host)}
+            >
               <Text style={styles.refreshBtnText}>↻</Text>
             </TouchableOpacity>
           </View>
+          <Text style={[styles.label, styles.labelSpaced]}>
+            Context size (num_ctx)
+          </Text>
+          <TextInput
+            style={styles.input}
+            value={context}
+            onChangeText={setContext}
+            keyboardType="number-pad"
+            placeholder="8192"
+            placeholderTextColor="#5b6472"
+          />
+          <Text style={styles.help}>
+            Larger fits longer chats and images, but uses more RAM on the
+            server.
+          </Text>
         </View>
 
         {/* Models */}
@@ -128,25 +152,23 @@ export default function SettingsScreen({navigation}: {navigation: any}) {
               return (
                 <TouchableOpacity
                   key={m.name}
-                  style={[
-                    styles.modelRow,
-                    idx > 0 && styles.modelRowBorder,
-                  ]}
-                  onPress={() => setModel(m.name)}>
+                  style={[styles.modelRow, idx > 0 && styles.modelRowBorder]}
+                  onPress={() => setModel(m.name)}
+                >
                   <View style={styles.flex}>
                     <Text
                       style={[
                         styles.modelName,
                         selected && styles.modelNameSel,
-                      ]}>
+                      ]}
+                    >
                       {m.name}
                     </Text>
                     {!!m.size && (
                       <Text style={styles.modelSize}>{fmtSize(m.size)}</Text>
                     )}
                   </View>
-                  <View
-                    style={[styles.check, selected && styles.checkSel]}>
+                  <View style={[styles.check, selected && styles.checkSel]}>
                     {selected && <Text style={styles.checkMark}>✓</Text>}
                   </View>
                 </TouchableOpacity>
@@ -171,7 +193,8 @@ export default function SettingsScreen({navigation}: {navigation: any}) {
         <TouchableOpacity
           style={[styles.saveBtn, !model && styles.saveBtnDisabled]}
           onPress={onSave}
-          disabled={!model}>
+          disabled={!model}
+        >
           <Text style={styles.saveBtnText}>Save</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -180,7 +203,7 @@ export default function SettingsScreen({navigation}: {navigation: any}) {
 }
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: '#0b0d12'},
+  root: { flex: 1, backgroundColor: '#0b0d12' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -190,10 +213,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#1c2230',
   },
-  back: {color: '#5e9bff', fontSize: 32, width: 44, lineHeight: 34},
-  title: {color: '#fff', fontSize: 18, fontWeight: '700'},
-  headerSpacer: {width: 44},
-  content: {padding: 16},
+  back: { color: '#5e9bff', fontSize: 32, width: 44, lineHeight: 34 },
+  title: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  headerSpacer: { width: 44 },
+  content: { padding: 16 },
   section: {
     color: '#5b6472',
     fontSize: 12,
@@ -210,9 +233,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1c2230',
   },
-  label: {color: '#9aa4b2', fontSize: 12, marginBottom: 6},
-  row: {flexDirection: 'row', alignItems: 'center'},
-  flex: {flex: 1},
+  label: { color: '#9aa4b2', fontSize: 12, marginBottom: 6 },
+  labelSpaced: { marginTop: 14 },
+  row: { flexDirection: 'row', alignItems: 'center' },
+  flex: { flex: 1 },
   input: {
     backgroundColor: '#0b0d12',
     color: '#fff',
@@ -232,8 +256,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  refreshBtnText: {color: '#5e9bff', fontSize: 20, fontWeight: '700'},
-  loader: {paddingVertical: 14},
+  refreshBtnText: { color: '#5e9bff', fontSize: 20, fontWeight: '700' },
+  loader: { paddingVertical: 14 },
   modelRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -243,9 +267,9 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#1c2230',
   },
-  modelName: {color: '#cbd5e1', fontSize: 15},
-  modelNameSel: {color: '#fff', fontWeight: '600'},
-  modelSize: {color: '#5b6472', fontSize: 12, marginTop: 2},
+  modelName: { color: '#cbd5e1', fontSize: 15 },
+  modelNameSel: { color: '#fff', fontWeight: '600' },
+  modelSize: { color: '#5b6472', fontSize: 12, marginTop: 2 },
   check: {
     width: 24,
     height: 24,
@@ -255,10 +279,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkSel: {backgroundColor: '#2563eb', borderColor: '#2563eb'},
-  checkMark: {color: '#fff', fontSize: 13, fontWeight: '700'},
-  muted: {color: '#5b6472', fontSize: 14, paddingVertical: 6},
-  error: {color: '#f87171', fontSize: 13, marginTop: 10, marginLeft: 4},
+  checkSel: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
+  checkMark: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  muted: { color: '#5b6472', fontSize: 14, paddingVertical: 6 },
+  error: { color: '#f87171', fontSize: 13, marginTop: 10, marginLeft: 4 },
   linkRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -270,9 +294,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#1c2230',
   },
-  linkText: {color: '#e5e7eb', fontSize: 15},
-  linkChevron: {color: '#5b6472', fontSize: 20},
-  help: {color: '#5b6472', fontSize: 12, marginTop: 8, marginLeft: 4},
+  linkText: { color: '#e5e7eb', fontSize: 15 },
+  linkChevron: { color: '#5b6472', fontSize: 20 },
+  help: { color: '#5b6472', fontSize: 12, marginTop: 8, marginLeft: 4 },
   saveBtn: {
     marginTop: 28,
     backgroundColor: '#2563eb',
@@ -280,6 +304,6 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     alignItems: 'center',
   },
-  saveBtnDisabled: {backgroundColor: '#2a3344'},
-  saveBtnText: {color: '#fff', fontWeight: '700', fontSize: 16},
+  saveBtnDisabled: { backgroundColor: '#2a3344' },
+  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
 });

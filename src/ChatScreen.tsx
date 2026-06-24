@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -24,6 +24,20 @@ import { useSettings } from './settings';
 const DOWNLOAD = RNFS.DownloadDirectoryPath;
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|bmp|heic)$/i;
 
+const ensurePerm = async (
+  perm: Parameters<typeof PermissionsAndroid.request>[0],
+  deniedMsg: string,
+) => {
+  const granted = await PermissionsAndroid.request(perm);
+  if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+    Alert.alert(deniedMsg);
+    return false;
+  }
+  return true;
+};
+
+const showErr = (e: unknown) => Alert.alert('error', (e as Error).message);
+
 interface Attachment {
   uri: string; // for preview
   base64: string; // sent to the model
@@ -37,7 +51,7 @@ interface ChatLine {
 }
 
 // Reveals text progressively (typewriter effect) for AI replies.
-function TypingText({
+const TypingText = memo(function TypingText({
   text,
   style,
   onTick,
@@ -63,7 +77,37 @@ function TypingText({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
   return <Text style={style}>{shown}</Text>;
-}
+});
+
+// One chat row. Memoized so unrelated rows don't re-render when `lines` grows.
+const ChatRow = memo(function ChatRow({
+  item,
+  onAiTick,
+}: {
+  item: ChatLine;
+  onAiTick: () => void;
+}) {
+  if (item.role === 'tool') {
+    return (
+      <View style={styles.toolWrap}>
+        <Text style={styles.toolText}>{item.text}</Text>
+      </View>
+    );
+  }
+  const isUser = item.role === 'user';
+  return (
+    <View style={[styles.bubble, isUser ? styles.user : styles.ai]}>
+      {item.image && (
+        <Image source={{ uri: item.image }} style={styles.bubbleImage} />
+      )}
+      {item.role === 'ai' ? (
+        <TypingText text={item.text} style={styles.aiText} onTick={onAiTick} />
+      ) : (
+        <Text style={styles.userText}>{item.text}</Text>
+      )}
+    </View>
+  );
+});
 
 export default function ChatScreen({ navigation }: { navigation: any }) {
   const insets = useSafeAreaInsets();
@@ -103,17 +147,24 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
     };
   }, []);
 
+  const applyAsset = (res: Awaited<ReturnType<typeof launchCamera>>) => {
+    const a = res.assets?.[0];
+    if (a?.base64 && a.uri) {
+      setAttachment({ uri: a.uri, base64: a.base64 });
+    }
+  };
+
   const toggleListening = async () => {
     if (listening) {
       NativeModules.SttModule?.stop();
       setListening(false);
       return;
     }
-    const granted = await PermissionsAndroid.request(
+    const ok = await ensurePerm(
       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+      'Microphone permission denied',
     );
-    if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-      Alert.alert('Microphone permission denied');
+    if (!ok) {
       return;
     }
     setInput('');
@@ -121,8 +172,17 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
     NativeModules.SttModule?.start('ko-KR');
   };
 
+  const lastScroll = useRef(0);
   const nextId = () => `${counter.current++}`;
-  const scrollEnd = () => listRef.current?.scrollToEnd({ animated: false });
+  // Throttled: typewriter fires this ~55x/s; cap to ~10x/s to avoid scroll spam.
+  const scrollEnd = useCallback(() => {
+    const now = Date.now();
+    if (now - lastScroll.current < 100) {
+      return;
+    }
+    lastScroll.current = now;
+    listRef.current?.scrollToEnd({ animated: false });
+  }, []);
   // Scroll after the new row has laid out (animated).
   const scrollSoon = () =>
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
@@ -132,36 +192,31 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
     scrollSoon();
   };
 
-  const pickFromGallery = async () => {
-    const res = await launchImageLibrary({
-      mediaType: 'photo',
-      includeBase64: true,
-      quality: 0.7,
-    });
-    const a = res.assets?.[0];
-    if (a?.base64 && a.uri) {
-      setAttachment({ uri: a.uri, base64: a.base64 });
-    }
-  };
+  const pickFromGallery = async () =>
+    applyAsset(
+      await launchImageLibrary({
+        mediaType: 'photo',
+        includeBase64: true,
+        quality: 0.7,
+      }),
+    );
 
   const takePhoto = async () => {
-    const granted = await PermissionsAndroid.request(
+    const ok = await ensurePerm(
       PermissionsAndroid.PERMISSIONS.CAMERA,
+      'Camera permission denied',
     );
-    if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-      Alert.alert('Camera permission denied');
+    if (!ok) {
       return;
     }
-    const res = await launchCamera({
-      mediaType: 'photo',
-      includeBase64: true,
-      quality: 0.7,
-      saveToPhotos: true,
-    });
-    const a = res.assets?.[0];
-    if (a?.base64 && a.uri) {
-      setAttachment({ uri: a.uri, base64: a.base64 });
-    }
+    applyAsset(
+      await launchCamera({
+        mediaType: 'photo',
+        includeBase64: true,
+        quality: 0.7,
+        saveToPhotos: true,
+      }),
+    );
   };
 
   const openDownloadPicker = async () => {
@@ -172,7 +227,7 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
         .map(e => e.name);
       setDlImages(imgs);
     } catch (e) {
-      Alert.alert('error', (e as Error).message);
+      showErr(e);
     }
   };
 
@@ -182,7 +237,7 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
       const base64 = await RNFS.readFile(path, 'base64');
       setAttachment({ uri: `file://${path}`, base64 });
     } catch (e) {
-      Alert.alert('error', (e as Error).message);
+      showErr(e);
     } finally {
       setDlImages(null);
     }
@@ -234,32 +289,13 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
     }
   };
 
-  const renderItem = ({ item }: { item: ChatLine }) => {
-    if (item.role === 'tool') {
-      return (
-        <View style={styles.toolWrap}>
-          <Text style={styles.toolText}>{item.text}</Text>
-        </View>
-      );
-    }
-    const isUser = item.role === 'user';
-    return (
-      <View style={[styles.bubble, isUser ? styles.user : styles.ai]}>
-        {item.image && (
-          <Image source={{ uri: item.image }} style={styles.bubbleImage} />
-        )}
-        {item.role === 'ai' ? (
-          <TypingText
-            text={item.text}
-            style={styles.aiText}
-            onTick={scrollEnd}
-          />
-        ) : (
-          <Text style={styles.userText}>{item.text}</Text>
-        )}
-      </View>
-    );
-  };
+  const renderItem = useCallback(
+    ({ item }: { item: ChatLine }) => (
+      <ChatRow item={item} onAiTick={scrollEnd} />
+    ),
+    [scrollEnd],
+  );
+  const keyExtractor = useCallback((i: ChatLine) => i.id, []);
 
   return (
     <KeyboardAvoidingView
@@ -310,8 +346,12 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
           style={styles.list}
           contentContainerStyle={styles.listContent}
           data={lines}
-          keyExtractor={i => i.id}
+          keyExtractor={keyExtractor}
           renderItem={renderItem}
+          removeClippedSubviews
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={7}
         />
       )}
 

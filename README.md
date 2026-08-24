@@ -36,8 +36,7 @@
 `gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf`(약 2.5GB) 파일을 필요로 한다. 용량 때문에
 이 저장소에는 포함되어 있지 않으니, 직접 받아서 넣어야 한다.
 
-1. Hugging Face 등에서 위 파일명(`gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf`, Unsloth의
-   Gemma 4 E2B 동적 양자화 GGUF)을 검색해 다운로드
+1. [unsloth/gemma-4-E2B-it-qat-GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF/blob/main/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf)에서 `gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf` 다운로드
 2. `android/app/src/main/assets/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf` 경로에 그대로 복사
 3. 이후 빌드하면 APK에 자동으로 번들됨 (`.gitignore`에 의해 git에는 안 잡힘)
 

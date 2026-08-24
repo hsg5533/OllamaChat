@@ -30,6 +30,20 @@
 - Node 18+ (테스트: v22), Android SDK + JDK 17, 실기기 또는 에뮬레이터
 - PC에 Ollama 실행 + **vision 지원 모델**(예: `gemma3`/`gemma 멀티모달`, `qwen2.5` 등 tool-calling 모델)
 
+## 온디바이스 오프라인 모델 (필수 — 저장소엔 없음)
+
+서버(Ollama/llama.cpp)에 연결이 안 될 때 기기 안에서 직접 답하는 폴백 기능이
+`gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf`(약 2.5GB) 파일을 필요로 한다. 용량 때문에
+이 저장소에는 포함되어 있지 않으니, 직접 받아서 넣어야 한다.
+
+1. Hugging Face 등에서 위 파일명(`gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf`, Unsloth의
+   Gemma 4 E2B 동적 양자화 GGUF)을 검색해 다운로드
+2. `android/app/src/main/assets/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf` 경로에 그대로 복사
+3. 이후 빌드하면 APK에 자동으로 번들됨 (`.gitignore`에 의해 git에는 안 잡힘)
+
+이 파일 없이 빌드해도 앱 자체는 동작하지만, 오프라인 폴백/오프라인 모드 기능만
+빠진다.
+
 ## localhost 함정 (꼭 읽기)
 
 폰은 PC가 아니다. 폰의 `localhost`는 폰 자신을 가리킨다.

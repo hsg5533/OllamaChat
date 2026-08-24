@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -9,38 +9,49 @@ import {
   NativeEventEmitter,
   NativeModules,
   PermissionsAndroid,
+  StyleProp,
   StyleSheet,
   Text,
   TextInput,
+  TextStyle,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import * as RNFS from '@dr.pogodin/react-native-fs';
-import { Agent } from './agent';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../App';
+import { Agent, createAgent } from './agent';
 import { useSettings } from './settings';
+
+type Props = NativeStackScreenProps<RootStackParamList, 'Chat'>;
 
 const DOWNLOAD = RNFS.DownloadDirectoryPath;
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|bmp|heic)$/i;
 
-const ensurePerm = async (
+async function ensurePerm(
   perm: Parameters<typeof PermissionsAndroid.request>[0],
   deniedMsg: string,
-) => {
+) {
   const granted = await PermissionsAndroid.request(perm);
   if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
     Alert.alert(deniedMsg);
     return false;
   }
   return true;
-};
+}
 
 const showErr = (e: unknown) => Alert.alert('error', (e as Error).message);
 
 interface Attachment {
   uri: string; // for preview
   base64: string; // sent to the model
+}
+
+// Payload of the native SttModule's 'stt_results' event.
+interface SttResultEvent {
+  text?: string;
 }
 
 interface ChatLine {
@@ -51,13 +62,13 @@ interface ChatLine {
 }
 
 // Reveals text progressively (typewriter effect) for AI replies.
-const TypingText = memo(function TypingText({
+function TypingText({
   text,
   style,
   onTick,
 }: {
   text: string;
-  style: any;
+  style: StyleProp<TextStyle>;
   onTick?: () => void;
 }) {
   const [shown, setShown] = useState('');
@@ -77,16 +88,9 @@ const TypingText = memo(function TypingText({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
   return <Text style={style}>{shown}</Text>;
-});
+}
 
-// One chat row. Memoized so unrelated rows don't re-render when `lines` grows.
-const ChatRow = memo(function ChatRow({
-  item,
-  onAiTick,
-}: {
-  item: ChatLine;
-  onAiTick: () => void;
-}) {
+function ChatRow({ item, onAiTick }: { item: ChatLine; onAiTick: () => void }) {
   if (item.role === 'tool') {
     return (
       <View style={styles.toolWrap}>
@@ -107,11 +111,11 @@ const ChatRow = memo(function ChatRow({
       )}
     </View>
   );
-});
+}
 
-export default function ChatScreen({ navigation }: { navigation: any }) {
+export default function ChatScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
-  const { host, model, context, ready } = useSettings();
+  const { host, model, apiType, offline, ready } = useSettings();
   const [input, setInput] = useState('');
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [busy, setBusy] = useState(false);
@@ -121,23 +125,25 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
   const [speakOn, setSpeakOn] = useState(false);
   const agentRef = useRef<Agent | null>(null);
   const counter = useRef(0);
+  const lastScroll = useRef(0);
   const listRef = useRef<FlatList<ChatLine>>(null);
 
   // Rebuild the agent whenever host/model change (or settings finish loading).
   useEffect(() => {
-    if (ready) {
-      agentRef.current = new Agent({ host, model, context });
-    }
-  }, [host, model, context, ready]);
+    if (ready) agentRef.current = createAgent(host, model, apiType, offline);
+  }, [host, model, apiType, offline, ready]);
 
   // Speech-to-text via the native SttModule (Android SpeechRecognizer).
   useEffect(() => {
     const emitter = new NativeEventEmitter(NativeModules.SttModule);
-    const onResults = emitter.addListener('stt_results', (e: any) => {
-      if (e?.text) {
-        setInput(e.text);
-      }
-    });
+    const onResults = emitter.addListener(
+      'stt_results',
+      (e: SttResultEvent) => {
+        if (e?.text) {
+          setInput(e.text);
+        }
+      },
+    );
     const onEnd = emitter.addListener('stt_end', () => setListening(false));
     const onError = emitter.addListener('stt_error', () => setListening(false));
     return () => {
@@ -154,101 +160,9 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
     }
   };
 
-  const toggleListening = async () => {
-    if (listening) {
-      NativeModules.SttModule?.stop();
-      setListening(false);
-      return;
-    }
-    const ok = await ensurePerm(
-      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-      'Microphone permission denied',
-    );
-    if (!ok) {
-      return;
-    }
-    setInput('');
-    setListening(true);
-    NativeModules.SttModule?.start('ko-KR');
-  };
-
-  const lastScroll = useRef(0);
-  const nextId = () => `${counter.current++}`;
-  // Throttled: typewriter fires this ~55x/s; cap to ~10x/s to avoid scroll spam.
-  const scrollEnd = useCallback(() => {
-    const now = Date.now();
-    if (now - lastScroll.current < 100) {
-      return;
-    }
-    lastScroll.current = now;
-    listRef.current?.scrollToEnd({ animated: false });
-  }, []);
-  // Scroll after the new row has laid out (animated).
-  const scrollSoon = () =>
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
-
   const addLine = (role: ChatLine['role'], text: string) => {
-    setLines(prev => [...prev, { id: nextId(), role, text }]);
-    scrollSoon();
-  };
-
-  const pickFromGallery = async () =>
-    applyAsset(
-      await launchImageLibrary({
-        mediaType: 'photo',
-        includeBase64: true,
-        quality: 0.7,
-      }),
-    );
-
-  const takePhoto = async () => {
-    const ok = await ensurePerm(
-      PermissionsAndroid.PERMISSIONS.CAMERA,
-      'Camera permission denied',
-    );
-    if (!ok) {
-      return;
-    }
-    applyAsset(
-      await launchCamera({
-        mediaType: 'photo',
-        includeBase64: true,
-        quality: 0.7,
-        saveToPhotos: true,
-      }),
-    );
-  };
-
-  const openDownloadPicker = async () => {
-    try {
-      const entries = await RNFS.readDir(DOWNLOAD);
-      const imgs = entries
-        .filter(e => e.isFile() && IMAGE_EXT.test(e.name))
-        .map(e => e.name);
-      setDlImages(imgs);
-    } catch (e) {
-      showErr(e);
-    }
-  };
-
-  const selectDownloadImage = async (name: string) => {
-    try {
-      const path = `${DOWNLOAD}/${name}`;
-      const base64 = await RNFS.readFile(path, 'base64');
-      setAttachment({ uri: `file://${path}`, base64 });
-    } catch (e) {
-      showErr(e);
-    } finally {
-      setDlImages(null);
-    }
-  };
-
-  const addImage = () => {
-    Alert.alert('Add image', undefined, [
-      { text: 'Gallery', onPress: pickFromGallery },
-      { text: 'Camera', onPress: takePhoto },
-      { text: 'Download folder', onPress: openDownloadPicker },
-    ]);
+    setLines(prev => [...prev, { id: `${counter.current++}`, role, text }]);
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
   };
 
   const send = async () => {
@@ -262,40 +176,30 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
     setAttachment(null);
     setLines(prev => [
       ...prev,
-      { id: nextId(), role: 'user', text: text || '(image)', image: imageUri },
+      {
+        id: `${counter.current++}`,
+        role: 'user',
+        text: text || '(image)',
+        image: imageUri,
+      },
     ]);
-    scrollSoon();
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     setBusy(true);
     try {
-      const answer = await agentRef.current.ask(
-        text || 'Describe this image.',
-        e => {
-          if (e.type === 'tool_call') {
-            addLine('tool', `→ ${e.name}(${JSON.stringify(e.args)})`);
-          } else {
-            addLine('tool', `← ${e.result}`);
-          }
-        },
-        images,
-      );
-      addLine('ai', answer);
-      if (speakOn) {
-        NativeModules.SpeakModule?.speak(answer);
+      const { answer, event } = await agentRef.current(text, images);
+      for (const e of event) {
+        e.type === 'tool_call'
+          ? addLine('tool', `→ ${e.name}(${JSON.stringify(e.args)})`)
+          : addLine('tool', `← ${e.result}`);
       }
+      addLine('ai', answer);
+      if (speakOn) NativeModules.SpeakModule?.speak(answer);
     } catch (err) {
-      addLine('ai', `error: ${(err as Error).message}`);
+      err instanceof Error && addLine('ai', `error: ${err.message}`);
     } finally {
       setBusy(false);
     }
   };
-
-  const renderItem = useCallback(
-    ({ item }: { item: ChatLine }) => (
-      <ChatRow item={item} onAiTick={scrollEnd} />
-    ),
-    [scrollEnd],
-  );
-  const keyExtractor = useCallback((i: ChatLine) => i.id, []);
 
   return (
     <KeyboardAvoidingView
@@ -306,15 +210,15 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Ollama Chat</Text>
-          <Text style={styles.subtitle}>{model}</Text>
+          <Text style={styles.subtitle}>
+            {model.split(/[\\/]/).pop() || model}
+          </Text>
         </View>
         <View style={styles.headerBtns}>
           <TouchableOpacity
             style={[styles.gearBtn, speakOn && styles.gearBtnActive]}
             onPress={() => {
-              if (speakOn) {
-                NativeModules.SpeakModule?.stop();
-              }
+              if (speakOn) NativeModules.SpeakModule?.stop();
               setSpeakOn(v => !v);
             }}
             hitSlop={10}
@@ -346,8 +250,18 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
           style={styles.list}
           contentContainerStyle={styles.listContent}
           data={lines}
-          keyExtractor={keyExtractor}
-          renderItem={renderItem}
+          keyExtractor={i => i.id}
+          renderItem={({ item }) => (
+            <ChatRow
+              item={item}
+              onAiTick={() => {
+                const now = Date.now();
+                if (now - lastScroll.current < 100) return;
+                lastScroll.current = now;
+                listRef.current?.scrollToEnd({ animated: false });
+              }}
+            />
+          )}
           removeClippedSubviews
           initialNumToRender={10}
           maxToRenderPerBatch={10}
@@ -370,7 +284,55 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
       <View style={[styles.inputRow, { paddingBottom: insets.bottom || 8 }]}>
         <TouchableOpacity
           style={styles.attachBtn}
-          onPress={addImage}
+          onPress={() => {
+            Alert.alert('Add image', undefined, [
+              {
+                text: 'Gallery',
+                onPress: async () =>
+                  applyAsset(
+                    await launchImageLibrary({
+                      mediaType: 'photo',
+                      includeBase64: true,
+                      quality: 0.7,
+                    }),
+                  ),
+              },
+              {
+                text: 'Camera',
+                onPress: async () => {
+                  const ok = await ensurePerm(
+                    PermissionsAndroid.PERMISSIONS.CAMERA,
+                    'Camera permission denied',
+                  );
+                  if (!ok) {
+                    return;
+                  }
+                  applyAsset(
+                    await launchCamera({
+                      mediaType: 'photo',
+                      includeBase64: true,
+                      quality: 0.7,
+                      saveToPhotos: true,
+                    }),
+                  );
+                },
+              },
+              {
+                text: 'Download folder',
+                onPress: async () => {
+                  try {
+                    const entries = await RNFS.readDir(DOWNLOAD);
+                    const imgs = entries
+                      .filter(e => e.isFile() && IMAGE_EXT.test(e.name))
+                      .map(e => e.name);
+                    setDlImages(imgs);
+                  } catch (e) {
+                    showErr(e);
+                  }
+                },
+              },
+            ]);
+          }}
           disabled={busy}
         >
           <Text style={styles.attachBtnText}>＋</Text>
@@ -388,7 +350,23 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
         />
         <TouchableOpacity
           style={[styles.micBtn, listening && styles.micBtnActive]}
-          onPress={toggleListening}
+          onPress={async () => {
+            if (listening) {
+              NativeModules.SttModule?.stop();
+              setListening(false);
+              return;
+            }
+            const ok = await ensurePerm(
+              PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+              'Microphone permission denied',
+            );
+            if (!ok) {
+              return;
+            }
+            setInput('');
+            setListening(true);
+            NativeModules.SttModule?.start('ko-KR');
+          }}
           disabled={busy}
         >
           <Text style={styles.micBtnText}>{listening ? '■' : '🎤'}</Text>
@@ -426,7 +404,17 @@ export default function ChatScreen({ navigation }: { navigation: any }) {
                 renderItem={({ item }) => (
                   <TouchableOpacity
                     style={styles.dlRow}
-                    onPress={() => selectDownloadImage(item)}
+                    onPress={async () => {
+                      try {
+                        const path = `${DOWNLOAD}/${item}`;
+                        const base64 = await RNFS.readFile(path, 'base64');
+                        setAttachment({ uri: `file://${path}`, base64 });
+                      } catch (e) {
+                        showErr(e);
+                      } finally {
+                        setDlImages(null);
+                      }
+                    }}
                   >
                     <Image
                       source={{ uri: `file://${DOWNLOAD}/${item}` }}

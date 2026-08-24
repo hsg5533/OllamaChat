@@ -1,22 +1,21 @@
-/**
- * Ollama Chat — tool-calling agent on a phone, talking to Ollama on your PC.
- *
- * @format
- */
-
-import {StatusBar} from 'react-native';
-import {SafeAreaProvider} from 'react-native-safe-area-context';
+import { StatusBar } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import {
   NavigationContainer,
   DefaultTheme,
   type Theme,
 } from '@react-navigation/native';
-import {createNativeStackNavigator} from '@react-navigation/native-stack';
-import {SettingsProvider} from './src/settings';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { SettingsProvider } from './src/settings';
 import ChatScreen from './src/ChatScreen';
 import SettingsScreen from './src/SettingsScreen';
 
-const Stack = createNativeStackNavigator();
+export type RootStackParamList = {
+  Chat: undefined;
+  Settings: undefined;
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const navTheme: Theme = {
   ...DefaultTheme,
@@ -41,8 +40,9 @@ function App() {
             screenOptions={{
               headerShown: false,
               animation: 'slide_from_right',
-              contentStyle: {backgroundColor: '#0b0d12'},
-            }}>
+              contentStyle: { backgroundColor: '#0b0d12' },
+            }}
+          >
             <Stack.Screen name="Chat" component={ChatScreen} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
           </Stack.Navigator>

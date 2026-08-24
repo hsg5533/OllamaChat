@@ -10,12 +10,17 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useSettings } from './settings';
+import { useSettings, type ApiType } from './settings';
 
 interface ModelInfo {
-  name: string;
+  name: string; // sent to the server / stored as the setting
+  label: string; // shown in the UI
   size: number;
 }
+
+// llama.cpp's /v1/models returns the full model path as its id; show just
+// the filename instead of the whole path.
+const basename = (path: string) => path.split(/[\\/]/).pop() || path;
 
 function fmtSize(bytes: number): string {
   if (!bytes) {
@@ -30,32 +35,49 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
   const {
     host: savedHost,
     model: savedModel,
-    context: savedContext,
+    apiType: savedApiType,
+    offline: savedOffline,
     save,
   } = useSettings();
   const [host, setHost] = useState(savedHost);
   const [model, setModel] = useState(savedModel);
-  const [context, setContext] = useState(String(savedContext));
+  const [apiType, setApiType] = useState<ApiType>(savedApiType);
+  const [offline, setOffline] = useState(savedOffline);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const fetchModels = async (h: string) => {
+  const fetchModels = async (h: string, type: ApiType) => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${h.replace(/\/$/, '')}/api/tags`);
+      const base = h.replace(/\/$/, '');
+      const res = await fetch(
+        type === 'llama' ? `${base}/v1/models` : `${base}/api/tags`,
+      );
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
       const data = await res.json();
-      const list: ModelInfo[] = (data.models ?? []).map((m: any) => ({
-        name: m.name,
-        size: m.size ?? 0,
-      }));
+      const list: ModelInfo[] =
+        type === 'llama'
+          ? (data.data ?? []).map((m: any) => ({
+              name: m.id,
+              label: basename(m.id),
+              size: 0,
+            }))
+          : (data.models ?? []).map((m: any) => ({
+              name: m.name,
+              label: m.name,
+              size: m.size ?? 0,
+            }));
       setModels(list);
       if (list.length === 0) {
-        setError('No models found — pull one with `ollama pull <model>`.');
+        setError(
+          type === 'llama'
+            ? 'No models found — is the llama.cpp server running?'
+            : 'No models found — pull one with `ollama pull <model>`.',
+        );
       }
     } catch (e) {
       setModels([]);
@@ -66,25 +88,9 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
   };
 
   useEffect(() => {
-    fetchModels(savedHost);
+    fetchModels(savedHost, savedApiType);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const onSave = async () => {
-    const ctx = Math.max(512, parseInt(context, 10) || 0);
-    await save(host.trim(), model, ctx);
-    navigation.goBack();
-  };
-
-  const openAllFilesAccess = async () => {
-    try {
-      await Linking.sendIntent(
-        'android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION',
-      );
-    } catch {
-      await Linking.openSettings();
-    }
-  };
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -119,26 +125,38 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
             />
             <TouchableOpacity
               style={styles.refreshBtn}
-              onPress={() => fetchModels(host)}
+              onPress={() => fetchModels(host, apiType)}
             >
               <Text style={styles.refreshBtnText}>↻</Text>
             </TouchableOpacity>
           </View>
-          <Text style={[styles.label, styles.labelSpaced]}>
-            Context size (num_ctx)
-          </Text>
-          <TextInput
-            style={styles.input}
-            value={context}
-            onChangeText={setContext}
-            keyboardType="number-pad"
-            placeholder="8192"
-            placeholderTextColor="#5b6472"
-          />
-          <Text style={styles.help}>
-            Larger fits longer chats and images, but uses more RAM on the
-            server.
-          </Text>
+        </View>
+
+        {/* Server type */}
+        <Text style={styles.section}>SERVER TYPE</Text>
+        <View style={styles.chipRow}>
+          {[
+            { id: 'ollama' as const, label: 'Ollama' },
+            { id: 'llama' as const, label: 'llama.cpp' },
+          ].map(t => (
+            <TouchableOpacity
+              key={t.id}
+              style={[styles.chip, apiType === t.id && styles.chipSel]}
+              onPress={() => {
+                setApiType(t.id);
+                fetchModels(host, t.id);
+              }}
+            >
+              <Text
+                style={[
+                  styles.chipText,
+                  apiType === t.id && styles.chipTextSel,
+                ]}
+              >
+                {t.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* Models */}
@@ -162,7 +180,7 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
                         selected && styles.modelNameSel,
                       ]}
                     >
-                      {m.name}
+                      {m.label}
                     </Text>
                     {!!m.size && (
                       <Text style={styles.modelSize}>{fmtSize(m.size)}</Text>
@@ -180,9 +198,40 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
         </View>
         {!!error && <Text style={styles.error}>{error}</Text>}
 
+        {/* Offline */}
+        <Text style={styles.section}>OFFLINE</Text>
+        <TouchableOpacity
+          style={styles.linkRow}
+          onPress={() => setOffline(v => !v)}
+        >
+          <View style={styles.flex}>
+            <Text style={styles.linkText}>Offline mode</Text>
+            <Text style={styles.help}>
+              Always answer with the on-device model — the server above is never
+              contacted. When off, the server is used normally and the on-device
+              model only kicks in if it can't be reached. Tools that need the
+              network (web search, etc.) won't work either way while offline.
+            </Text>
+          </View>
+          <View style={[styles.check, offline && styles.checkSel]}>
+            {offline && <Text style={styles.checkMark}>✓</Text>}
+          </View>
+        </TouchableOpacity>
+
         {/* Permissions */}
         <Text style={styles.section}>PERMISSIONS</Text>
-        <TouchableOpacity style={styles.linkRow} onPress={openAllFilesAccess}>
+        <TouchableOpacity
+          style={styles.linkRow}
+          onPress={async () => {
+            try {
+              await Linking.sendIntent(
+                'android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION',
+              );
+            } catch {
+              await Linking.openSettings();
+            }
+          }}
+        >
           <Text style={styles.linkText}>Grant file access</Text>
           <Text style={styles.linkChevron}>›</Text>
         </TouchableOpacity>
@@ -192,7 +241,10 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
 
         <TouchableOpacity
           style={[styles.saveBtn, !model && styles.saveBtnDisabled]}
-          onPress={onSave}
+          onPress={async () => {
+            await save(host.trim(), model, apiType, offline);
+            navigation.goBack();
+          }}
           disabled={!model}
         >
           <Text style={styles.saveBtnText}>Save</Text>
@@ -234,7 +286,6 @@ const styles = StyleSheet.create({
     borderColor: '#1c2230',
   },
   label: { color: '#9aa4b2', fontSize: 12, marginBottom: 6 },
-  labelSpaced: { marginTop: 14 },
   row: { flexDirection: 'row', alignItems: 'center' },
   flex: { flex: 1 },
   input: {
@@ -257,6 +308,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   refreshBtnText: { color: '#5e9bff', fontSize: 20, fontWeight: '700' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    backgroundColor: '#11151e',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#1c2230',
+  },
+  chipSel: { backgroundColor: '#16233a', borderColor: '#2563eb' },
+  chipText: { color: '#9aa4b2', fontSize: 13 },
+  chipTextSel: { color: '#fff', fontWeight: '600' },
   loader: { paddingVertical: 14 },
   modelRow: {
     flexDirection: 'row',

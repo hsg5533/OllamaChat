@@ -9,25 +9,35 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORE_HOST = 'ollama.host';
 const STORE_MODEL = 'ollama.model';
-const STORE_CONTEXT = 'ollama.numCtx';
-// Physical device: your PC's LAN IP. Android emulator: http://10.0.2.2:11434
+const STORE_API_TYPE = 'ollama.apiType';
+const STORE_OFFLINE_MODE = 'ollama.offline';
+export type ApiType = 'ollama' | 'llama';
 export const DEFAULT_HOST = 'http://192.168.0.27:11434';
 export const DEFAULT_MODEL = 'gemma4:e4b';
-// Context window. Larger fits longer chats and image tokens; needs more RAM.
-export const DEFAULT_CONTEXT = 8192;
+export const DEFAULT_API_TYPE: ApiType = 'ollama';
+// When on, always answer with the on-device model — the server is never
+// contacted (as opposed to only falling back to it when unreachable).
+export const DEFAULT_OFFLINE_MODE = false;
 
 interface SettingsValue {
   host: string;
   model: string;
-  context: number;
+  apiType: ApiType;
+  offline: boolean;
   ready: boolean;
-  save: (host: string, model: string, context: number) => Promise<void>;
+  save: (
+    host: string,
+    model: string,
+    apiType: ApiType,
+    offline: boolean,
+  ) => Promise<void>;
 }
 
 const SettingsContext = createContext<SettingsValue>({
   host: DEFAULT_HOST,
   model: DEFAULT_MODEL,
-  context: DEFAULT_CONTEXT,
+  apiType: DEFAULT_API_TYPE,
+  offline: DEFAULT_OFFLINE_MODE,
   ready: false,
   save: async () => {},
 });
@@ -35,17 +45,20 @@ const SettingsContext = createContext<SettingsValue>({
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [host, setHost] = useState(DEFAULT_HOST);
   const [model, setModel] = useState(DEFAULT_MODEL);
-  const [context, setContext] = useState(DEFAULT_CONTEXT);
+  const [apiType, setApiType] = useState<ApiType>(DEFAULT_API_TYPE);
+  const [offline, setOffline] = useState(DEFAULT_OFFLINE_MODE);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     (async () => {
       const h = await AsyncStorage.getItem(STORE_HOST);
       const m = await AsyncStorage.getItem(STORE_MODEL);
-      const n = await AsyncStorage.getItem(STORE_CONTEXT);
+      const a = await AsyncStorage.getItem(STORE_API_TYPE);
+      const o = await AsyncStorage.getItem(STORE_OFFLINE_MODE);
       if (h) setHost(h);
       if (m) setModel(m);
-      if (n) setContext(Number(n) || DEFAULT_CONTEXT);
+      if (a === 'ollama' || a === 'llama') setApiType(a);
+      if (o) setOffline(o === 'true');
       setReady(true);
     })();
   }, []);
@@ -53,18 +66,23 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const save = async (
     newHost: string,
     newModel: string,
-    newContext: number,
+    newApiType: ApiType,
+    newOffline: boolean,
   ) => {
     setHost(newHost);
     setModel(newModel);
-    setContext(newContext);
+    setApiType(newApiType);
+    setOffline(newOffline);
     await AsyncStorage.setItem(STORE_HOST, newHost);
     await AsyncStorage.setItem(STORE_MODEL, newModel);
-    await AsyncStorage.setItem(STORE_CONTEXT, String(newContext));
+    await AsyncStorage.setItem(STORE_API_TYPE, newApiType);
+    await AsyncStorage.setItem(STORE_OFFLINE_MODE, String(newOffline));
   };
 
   return (
-    <SettingsContext.Provider value={{ host, model, context, ready, save }}>
+    <SettingsContext.Provider
+      value={{ host, model, apiType, offline, ready, save }}
+    >
       {children}
     </SettingsContext.Provider>
   );

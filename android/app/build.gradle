@@ -78,6 +78,14 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace "com.ollamachat"
+
+    // The on-device fallback model (assets/*.gguf) must stay uncompressed so
+    // llama.cpp can copy it out as-is; compressing it would force a resize on
+    // first-run copy and roughly double that one-time cost.
+    androidResources {
+        noCompress += ["gguf"]
+    }
+
     defaultConfig {
         applicationId "com.ollamachat"
         minSdkVersion rootProject.ext.minSdkVersion

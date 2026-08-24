@@ -137,18 +137,26 @@ const writeFileTool = tool(
   },
 );
 
-// --- Web tool: fetch a page's readable text (model summarizes it) ---
 function htmlToText(html: string): string {
   return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(
+      /<(script|style|noscript|iframe|svg|canvas)[^>]*>[\s\S]*?<\/\1>/gi,
+      ' ',
+    )
+    .replace(/<(br|hr)\s*\/?>/gi, ' ')
+    .replace(/<\/(p|div|li|tr|h[1-6]|section|article)>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#39;|&#x27;/gi, "'")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) =>
+      String.fromCodePoint(parseInt(code, 16)),
+    )
     .replace(/\s+/g, ' ')
     .trim();
 }

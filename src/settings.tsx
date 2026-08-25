@@ -15,8 +15,6 @@ export type ApiType = 'ollama' | 'llama';
 export const DEFAULT_HOST = 'http://192.168.0.27:11434';
 export const DEFAULT_MODEL = 'gemma4:e4b';
 export const DEFAULT_API_TYPE: ApiType = 'ollama';
-// When on, always answer with the on-device model — the server is never
-// contacted (as opposed to only falling back to it when unreachable).
 export const DEFAULT_OFFLINE_MODE = false;
 
 interface SettingsValue {

@@ -11,37 +11,6 @@ import DeviceInfo from 'react-native-device-info';
 import Geolocation from '@react-native-community/geolocation';
 import Contacts from 'react-native-contacts';
 
-// File tools read/write the phone's public Download folder by direct path.
-// Requires "All files access" (MANAGE_EXTERNAL_STORAGE) to be granted.
-export interface Tool {
-  type: 'function';
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, any>;
-  };
-}
-
-export interface AgentTool {
-  definition: Tool;
-  run: (args: Record<string, any>) => Promise<string>;
-}
-
-// Wrap a tool body so any thrown error becomes a uniform "error: ..." string.
-// Lets each tool focus on its happy path instead of repeating try/catch.
-function safe(
-  fn: (args: Record<string, any>) => Promise<string>,
-): AgentTool['run'] {
-  return async args => {
-    try {
-      return await fn(args);
-    } catch (e) {
-      if (e instanceof Error) return `error: ${e.message}`;
-    }
-    return '';
-  };
-}
-
 const NO_PARAMS = { type: 'object', properties: {} };
 const PATH_PARAM = {
   type: 'object',
@@ -51,43 +20,41 @@ const PATH_PARAM = {
   },
 };
 
-// Coerce a possibly-missing arg to a string, e.g. str(message, 'Alarm').
-const str = (v: any, d = '') => String(v ?? d);
-
-// Builds an AgentTool from its schema pieces, wrapping run in safe().
-// Every tool below repeated the definition/function/type nesting; this is the
-// one place that boilerplate lives now.
 function tool(
   name: string,
   description: string,
   parameters: Record<string, any>,
   run: (args: Record<string, any>) => Promise<string>,
-): AgentTool {
+) {
   return {
     definition: {
       type: 'function',
       function: { name, description, parameters },
     },
-    run: safe(run),
+    run: async (args: Record<string, any>) => {
+      try {
+        return await run(args);
+      } catch (e) {
+        if (e instanceof Error) return `error: ${e.message}`;
+      }
+      return '';
+    },
   };
 }
 
-// Request an Android runtime permission; throw if the user denies it (the
-// thrown message is surfaced via safe() as "error: <label> permission denied").
 async function requirePermission(
   perm: Parameters<typeof PermissionsAndroid.request>[0],
   label: string,
-): Promise<void> {
+) {
   const granted = await PermissionsAndroid.request(perm);
   if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
     throw new Error(`${label} permission denied`);
   }
 }
 
-// --- File tools: public Download folder, direct path (needs All files access) ---
 const DOWNLOAD = RNFS.DownloadDirectoryPath;
 
-function downloadPath(path: string): string {
+function downloadPath(path: string) {
   const name = path.replace(/^\/+/, '');
   if (!name || name.includes('..') || name.includes('/')) {
     throw new Error(`invalid file name: ${path}`);
@@ -133,12 +100,12 @@ const writeFileTool = tool(
     },
   },
   async ({ path, content }) => {
-    await RNFS.writeFile(downloadPath(path), str(content), 'utf8');
+    await RNFS.writeFile(downloadPath(path), String(content ?? ''), 'utf8');
     return `saved to Download/${path}`;
   },
 );
 
-function htmlToText(html: string): string {
+function htmlToText(html: string) {
   return html
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(
@@ -188,7 +155,6 @@ const fetchUrlTool = tool(
   },
 );
 
-// --- Web search (keyless, DuckDuckGo HTML) ---
 const webSearchTool = tool(
   'web_search',
   "Search the web and return result titles, snippets, and links. Use this whenever you don't know something or need current/up-to-date info.",
@@ -212,7 +178,6 @@ const webSearchTool = tool(
   },
 );
 
-// --- Phone tools: open the dialer / SMS composer (user confirms the action) ---
 function cleanNumber(n: string): string {
   return String(n).replace(/[^\d+*#]/g, '');
 }
@@ -248,13 +213,12 @@ const sendSmsTool = tool(
     },
   },
   async ({ number, message }) => {
-    const body = encodeURIComponent(str(message));
+    const body = encodeURIComponent(String(message ?? ''));
     await Linking.openURL(`sms:${cleanNumber(number)}?body=${body}`);
     return `opened SMS composer for ${number}`;
   },
 );
 
-// --- Weather (keyless, wttr.in) ---
 const weatherTool = tool(
   'get_weather',
   'Get the current weather for a city.',
@@ -282,7 +246,6 @@ const weatherTool = tool(
   },
 );
 
-// --- Linking tools: open things in other apps ---
 const openUrlTool = tool(
   'open_url',
   'Open a URL in the browser or its app.',
@@ -344,7 +307,7 @@ const shareTextTool = tool(
     properties: { text: { type: 'string', description: 'text to share' } },
   },
   async ({ text }) => {
-    await Share.share({ message: str(text) });
+    await Share.share({ message: String(text ?? '') });
     return 'opened share sheet';
   },
 );
@@ -362,18 +325,15 @@ const setAlarmTool = tool(
     },
   },
   async ({ hour, minute, message }) => {
-    // Native module so int extras reach the clock app (Linking.sendIntent
-    // would pass them as Double, which AlarmClock ignores).
     await NativeModules.AlarmModule.setAlarm(
       Number(hour),
       Number(minute),
-      str(message, 'Alarm'),
+      String(message ?? 'Alarm'),
     );
     return `alarm set for ${hour}:${String(minute).padStart(2, '0')}`;
   },
 );
 
-// --- File extras ---
 const deleteFileTool = tool(
   'delete_file',
   "Delete a file from the phone's Download folder.",
@@ -396,7 +356,7 @@ const appendFileTool = tool(
     },
   },
   async ({ path, content }) => {
-    await RNFS.appendFile(downloadPath(path), str(content), 'utf8');
+    await RNFS.appendFile(downloadPath(path), String(content ?? ''), 'utf8');
     return `appended to ${path}`;
   },
 );
@@ -411,7 +371,6 @@ const fileExistsTool = tool(
   },
 );
 
-// --- Native device tools ---
 const clipboardSetTool = tool(
   'clipboard_set',
   'Copy text to the clipboard.',
@@ -421,7 +380,7 @@ const clipboardSetTool = tool(
     properties: { text: { type: 'string', description: 'text to copy' } },
   },
   async ({ text }) => {
-    Clipboard.setString(str(text));
+    Clipboard.setString(String(text ?? ''));
     return 'copied to clipboard';
   },
 );
@@ -503,7 +462,6 @@ const contactsTool = tool(
   },
 );
 
-// --- More native device tools (self-written native modules) ---
 const setTimerTool = tool(
   'set_timer',
   "Start a countdown timer in the phone's clock app.",
@@ -518,7 +476,7 @@ const setTimerTool = tool(
   async ({ seconds, message }) => {
     return await NativeModules.AlarmModule.setTimer(
       Number(seconds),
-      str(message, 'Timer'),
+      String(message ?? 'Timer'),
     );
   },
 );
@@ -580,11 +538,12 @@ const notifyTool = tool(
   },
   async ({ title, body }) => {
     if (Number(Platform.Version) >= 33) {
-      await PermissionsAndroid.request(
-        'android.permission.POST_NOTIFICATIONS' as any,
-      );
+      await PermissionsAndroid.request('android.permission.POST_NOTIFICATIONS');
     }
-    return await NativeModules.DeviceToolsModule.notify(str(title), str(body));
+    return await NativeModules.DeviceToolsModule.notify(
+      String(title ?? ''),
+      String(body ?? ''),
+    );
   },
 );
 
@@ -612,7 +571,7 @@ const writeCalendarTool = tool(
       String(title),
       String(start),
       Number(durationMinutes ?? 60),
-      str(location),
+      String(location ?? ''),
     );
   },
 );
@@ -661,7 +620,7 @@ const createContactTool = tool(
   },
 );
 
-export const tools: AgentTool[] = [
+const tools = [
   listFileTool,
   readFileTool,
   writeFileTool,

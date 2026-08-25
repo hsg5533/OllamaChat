@@ -22,7 +22,7 @@ import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import * as RNFS from '@dr.pogodin/react-native-fs';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../App';
-import { Agent, createAgent } from './agent';
+import { Agent, createAgent, stop } from './agent';
 import { useSettings } from './settings';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Chat'>;
@@ -62,7 +62,7 @@ function TypingText({
 }: {
   text: string;
   style: StyleProp<TextStyle>;
-  onTick?: () => void;
+  onTick: () => void;
 }) {
   const [shown, setShown] = useState('');
   useEffect(() => {
@@ -72,18 +72,15 @@ function TypingText({
     const id = setInterval(() => {
       i = Math.min(text.length, i + step);
       setShown(text.slice(0, i));
-      onTick?.();
-      if (i >= text.length) {
-        clearInterval(id);
-      }
+      onTick();
+      if (i >= text.length) clearInterval(id);
     }, 18);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
   return <Text style={style}>{shown}</Text>;
 }
 
-function ChatRow({ item, onAiTick }: { item: ChatLine; onAiTick: () => void }) {
+function ChatRow({ item, onTick }: { item: ChatLine; onTick: () => void }) {
   if (item.role === 'tool') {
     return (
       <View style={styles.toolWrap}>
@@ -99,7 +96,7 @@ function ChatRow({ item, onAiTick }: { item: ChatLine; onAiTick: () => void }) {
         <Image source={{ uri: item.image }} style={styles.bubbleImage} />
       )}
       {item.role === 'ai' ? (
-        <TypingText text={item.text} style={styles.aiText} onTick={onAiTick} />
+        <TypingText text={item.text} style={styles.aiText} onTick={onTick} />
       ) : (
         <Text style={styles.userText}>{item.text}</Text>
       )}
@@ -239,7 +236,7 @@ export default function ChatScreen({ navigation }: Props) {
           renderItem={({ item }) => (
             <ChatRow
               item={item}
-              onAiTick={() => {
+              onTick={() => {
                 const now = Date.now();
                 if (now - lastScroll.current < 100) return;
                 lastScroll.current = now;
@@ -345,9 +342,7 @@ export default function ChatScreen({ navigation }: Props) {
               PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
               'Microphone permission denied',
             );
-            if (!ok) {
-              return;
-            }
+            if (!ok) return;
             setInput('');
             setListening(true);
             NativeModules.SttModule?.start('ko-KR');
@@ -362,7 +357,9 @@ export default function ChatScreen({ navigation }: Props) {
           disabled={busy}
         >
           {busy ? (
-            <ActivityIndicator color="#fff" />
+            <TouchableOpacity onPress={stop}>
+              <ActivityIndicator color="#fff" />
+            </TouchableOpacity>
           ) : (
             <Text style={styles.sendBtnText}>↑</Text>
           )}

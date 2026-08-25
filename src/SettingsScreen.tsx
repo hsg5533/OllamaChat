@@ -18,14 +18,12 @@ interface ModelInfo {
   size: number;
 }
 
-// llama.cpp's /v1/models returns the full model path as its id; show just
-// the filename instead of the whole path.
-const basename = (path: string) => path.split(/[\\/]/).pop() || path;
+function basename(path: string) {
+  return path.split(/[\\/]/).pop() || path;
+}
 
-function fmtSize(bytes: number): string {
-  if (!bytes) {
-    return '';
-  }
+function fmtSize(bytes: number) {
+  if (!bytes) return '';
   const gb = bytes / 1e9;
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
 }

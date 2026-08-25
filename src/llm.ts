@@ -17,7 +17,10 @@ export async function load(path: string) {
     model: path,
     n_ctx: 4096,
     n_batch: 512,
-    n_gpu_layers: 0, // CPU 추론. 기기 GPU 오프로드를 쓰려면 99.
+    n_gpu_layers: 0, // CPU 추론. 기기 GPU 오프로드를 쓰려면 99. (현재 llama.rn은 iOS에서만 지원)
+    // 이 앱은 한 번에 하나의 대화만 처리한다. 기본값(8)은 안 쓰는 병렬 시퀀스
+    // 슬롯까지 버퍼를 잡아 느려지므로 1로 줄인다.
+    n_parallel: 1,
   });
 }
 

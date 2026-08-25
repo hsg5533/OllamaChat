@@ -42,16 +42,9 @@ async function ensurePerm(
   return true;
 }
 
-const showErr = (e: unknown) => Alert.alert('error', (e as Error).message);
-
 interface Attachment {
   uri: string; // for preview
   base64: string; // sent to the model
-}
-
-// Payload of the native SttModule's 'stt_results' event.
-interface SttResultEvent {
-  text?: string;
 }
 
 interface ChatLine {
@@ -98,9 +91,10 @@ function ChatRow({ item, onAiTick }: { item: ChatLine; onAiTick: () => void }) {
       </View>
     );
   }
-  const isUser = item.role === 'user';
   return (
-    <View style={[styles.bubble, isUser ? styles.user : styles.ai]}>
+    <View
+      style={[styles.bubble, item.role === 'user' ? styles.user : styles.ai]}
+    >
       {item.image && (
         <Image source={{ uri: item.image }} style={styles.bubbleImage} />
       )}
@@ -136,14 +130,7 @@ export default function ChatScreen({ navigation }: Props) {
   // Speech-to-text via the native SttModule (Android SpeechRecognizer).
   useEffect(() => {
     const emitter = new NativeEventEmitter(NativeModules.SttModule);
-    const onResults = emitter.addListener(
-      'stt_results',
-      (e: SttResultEvent) => {
-        if (e?.text) {
-          setInput(e.text);
-        }
-      },
-    );
+    const onResults = emitter.addListener('stt_results', e => setInput(e.text));
     const onEnd = emitter.addListener('stt_end', () => setListening(false));
     const onError = emitter.addListener('stt_error', () => setListening(false));
     return () => {
@@ -155,9 +142,7 @@ export default function ChatScreen({ navigation }: Props) {
 
   const applyAsset = (res: Awaited<ReturnType<typeof launchCamera>>) => {
     const a = res.assets?.[0];
-    if (a?.base64 && a.uri) {
-      setAttachment({ uri: a.uri, base64: a.base64 });
-    }
+    if (a?.base64 && a.uri) setAttachment({ uri: a.uri, base64: a.base64 });
   };
 
   const addLine = (role: ChatLine['role'], text: string) => {
@@ -327,7 +312,7 @@ export default function ChatScreen({ navigation }: Props) {
                       .map(e => e.name);
                     setDlImages(imgs);
                   } catch (e) {
-                    showErr(e);
+                    e instanceof Error && Alert.alert('error', e.message);
                   }
                 },
               },
@@ -410,7 +395,7 @@ export default function ChatScreen({ navigation }: Props) {
                         const base64 = await RNFS.readFile(path, 'base64');
                         setAttachment({ uri: `file://${path}`, base64 });
                       } catch (e) {
-                        showErr(e);
+                        e instanceof Error && Alert.alert('error', e.message);
                       } finally {
                         setDlImages(null);
                       }

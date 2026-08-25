@@ -36,8 +36,9 @@ function safe(
     try {
       return await fn(args);
     } catch (e) {
-      return `error: ${(e as Error).message}`;
+      if (e instanceof Error) return `error: ${e.message}`;
     }
+    return '';
   };
 }
 

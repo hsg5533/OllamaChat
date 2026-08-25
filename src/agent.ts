@@ -81,7 +81,7 @@ async function call(
       name: 'offline',
       result: '오프라인 모델로 답변합니다.',
     });
-    return onDevice(chat, tool);
+    return await onDevice(chat, tool);
   } finally {
     clearTimeout(timeout);
   }
@@ -97,7 +97,7 @@ export function createAgent(
 ) {
   const history: Chat[] = [{ role: 'system', content: SYSTEM_PROMPT }];
   return async (input: string, images?: string[]) => {
-    const hasImages = !!images && images.length > 0;
+    const hasImages = images && images.length > 0;
     const userMsg: Chat = { role: 'user', content: input };
     if (hasImages) userMsg.images = images;
     history.push(userMsg);
@@ -105,11 +105,9 @@ export function createAgent(
       const { content } = await call(host, model, type, false, [
         { role: 'user', content: input, images },
       ]);
-
       history.push({ role: 'assistant', content });
       return { answer: content, event: [] };
     }
-
     const event: Event[] = [];
     if (offline) {
       event.push({
@@ -119,8 +117,6 @@ export function createAgent(
       });
     }
     for (;;) {
-      // Offline mode skips the server entirely; otherwise try it first and
-      // fall back to the on-device model if it's unreachable.
       const message = offline
         ? await onDevice(history, true)
         : await call(host, model, type, true, history, event);
